@@ -13,37 +13,51 @@ ANTHROPIC_KEY      = os.environ.get("ANTHROPIC_API_KEY")
 TAVILY_KEY         = os.environ.get("TAVILY_API_KEY")
 
 # ── 取得対象 ──────────────────────────────
+# yfinance用シンボル（米国・為替）
 INDICES = [
-    {"symbol": "^N225",   "name": "日経平均",     "group": "jp_stock"},
-    {"symbol": "^TOPX",   "name": "TOPIX",        "group": "jp_stock"},
-    {"symbol": "^TSE9",   "name": "東証グロース", "group": "jp_stock"},
-    {"symbol": "^GSPC",   "name": "S&P500",       "group": "us_stock"},
-    {"symbol": "^DJI",    "name": "NYダウ",       "group": "us_stock"},
-    {"symbol": "^IXIC",   "name": "NASDAQ",       "group": "us_stock"},
+    {"symbol": "^N225",   "name": "日経平均",     "group": "jp_stock", "src": "yf"},
+    {"symbol": "^tpx",    "name": "TOPIX",        "group": "jp_stock", "src": "stooq"},
+    {"symbol": "^tsm",    "name": "東証グロース", "group": "jp_stock", "src": "stooq"},
+    {"symbol": "^GSPC",   "name": "S&P500",       "group": "us_stock", "src": "yf"},
+    {"symbol": "^DJI",    "name": "NYダウ",       "group": "us_stock", "src": "yf"},
+    {"symbol": "^IXIC",   "name": "NASDAQ",       "group": "us_stock", "src": "yf"},
 ]
 FX = [
-    {"symbol": "USDJPY=X", "name": "ドル円"},
-    {"symbol": "EURUSD=X", "name": "ユーロドル"},
+    {"symbol": "USDJPY=X", "name": "ドル円",     "src": "yf"},
+    {"symbol": "EURUSD=X", "name": "ユーロドル", "src": "yf"},
 ]
 BONDS = [
-    {"symbol": "^TNX",    "name": "米10年債利回り"},
-    {"symbol": "^JGB10Y", "name": "日10年債利回り"},
+    {"symbol": "^TNX",     "name": "米10年債利回り", "src": "yf"},
+    {"symbol": "10yjpy.b", "name": "日10年債利回り", "src": "stooq"},
 ]
 
 # ── データ取得 ─────────────────────────────
-def get_data(symbol):
+def get_data(symbol, src="yf"):
     try:
-        hist = yf.Ticker(symbol).history(period="5d")
-        if len(hist) < 1:
-            return None
-        latest = hist.iloc[-1]
-        prev   = hist.iloc[-2] if len(hist) >= 2 else None
-        close  = latest["Close"]
-        change     = close - prev["Close"] if prev is not None else 0
-        change_pct = (change / prev["Close"] * 100) if prev is not None else 0
+        if src == "stooq":
+            import pandas_datareader.data as web
+            from datetime import timedelta, date
+            end = date.today()
+            start = end - timedelta(days=14)
+            df = web.DataReader(symbol, "stooq", start, end)
+            if df.empty:
+                return None
+            df = df.sort_index()
+            hist_close = df["Close"]
+            close = float(hist_close.iloc[-1])
+            prev_close = float(hist_close.iloc[-2]) if len(hist_close) >= 2 else close
+        else:
+            hist = yf.Ticker(symbol).history(period="5d")
+            if len(hist) < 1:
+                return None
+            close = float(hist.iloc[-1]["Close"])
+            prev_close = float(hist.iloc[-2]["Close"]) if len(hist) >= 2 else close
+
+        change     = close - prev_close
+        change_pct = (change / prev_close * 100) if prev_close else 0
         return {"close": close, "change": change, "change_pct": change_pct}
     except Exception as e:
-        print(f"Error fetching {symbol}: {e}")
+        print(f"Error fetching {symbol} ({src}): {e}")
         return None
 
 def fmt_line(name, data, decimals=2, bps=False):
@@ -138,7 +152,7 @@ def format_message():
 
     all_data = {}
     for item in INDICES + FX + BONDS:
-        all_data[item["name"]] = get_data(item["symbol"])
+        all_data[item["name"]] = get_data(item["symbol"], item.get("src", "yf"))
 
     summary_lines = []
     for item in INDICES + FX + BONDS:
