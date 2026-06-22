@@ -7,57 +7,44 @@ import pytz
 import anthropic
 
 # ── 環境変数 ──────────────────────────────
-LINE_CHANNEL_TOKEN = os.environ.get("LINE_CHANNEL_TOKEN")   # チャネルアクセストークン
-LINE_USER_ID       = os.environ.get("LINE_USER_ID")         # 送信先ユーザーID
+LINE_CHANNEL_TOKEN = os.environ.get("LINE_CHANNEL_TOKEN")
+LINE_USER_ID       = os.environ.get("LINE_USER_ID")
 ANTHROPIC_KEY      = os.environ.get("ANTHROPIC_API_KEY")
 TAVILY_KEY         = os.environ.get("TAVILY_API_KEY")
 
 # ── 取得対象 ──────────────────────────────
-# yfinance用シンボル（米国・為替）
+# yfinanceで安定して取れるシンボルのみ使用
+# TOPIX・東証グロース・日10年債はETFで代用
 INDICES = [
-    {"symbol": "^N225",   "name": "日経平均",     "group": "jp_stock", "src": "yf"},
-    {"symbol": "^tpx",    "name": "TOPIX",        "group": "jp_stock", "src": "stooq"},
-    {"symbol": "^tsm",    "name": "東証グロース", "group": "jp_stock", "src": "stooq"},
-    {"symbol": "^GSPC",   "name": "S&P500",       "group": "us_stock", "src": "yf"},
-    {"symbol": "^DJI",    "name": "NYダウ",       "group": "us_stock", "src": "yf"},
-    {"symbol": "^IXIC",   "name": "NASDAQ",       "group": "us_stock", "src": "yf"},
+    {"symbol": "^N225",  "name": "日経平均",          "group": "jp_stock"},
+    {"symbol": "1306.T", "name": "TOPIX(ETF)",        "group": "jp_stock"},  # TOPIX連動ETF
+    {"symbol": "2516.T", "name": "東証グロース(ETF)", "group": "jp_stock"},  # グロース250ETF
+    {"symbol": "^GSPC",  "name": "S&P500",            "group": "us_stock"},
+    {"symbol": "^DJI",   "name": "NYダウ",            "group": "us_stock"},
+    {"symbol": "^IXIC",  "name": "NASDAQ",            "group": "us_stock"},
 ]
 FX = [
-    {"symbol": "USDJPY=X", "name": "ドル円",     "src": "yf"},
-    {"symbol": "EURUSD=X", "name": "ユーロドル", "src": "yf"},
+    {"symbol": "USDJPY=X", "name": "ドル円"},
+    {"symbol": "EURUSD=X", "name": "ユーロドル"},
 ]
 BONDS = [
-    {"symbol": "^TNX",     "name": "米10年債利回り", "src": "yf"},
-    {"symbol": "10yjpy.b", "name": "日10年債利回り", "src": "stooq"},
+    {"symbol": "^TNX",  "name": "米10年債利回り"},
+    {"symbol": "^IRX",  "name": "日10年債(参考:米13週)", "note": True},  # 日本国債はyfinanceで取得不可のため参考値
 ]
 
 # ── データ取得 ─────────────────────────────
-def get_data(symbol, src="yf"):
+def get_data(symbol):
     try:
-        if src == "stooq":
-            import pandas_datareader.data as web
-            from datetime import timedelta, date
-            end = date.today()
-            start = end - timedelta(days=14)
-            df = web.DataReader(symbol, "stooq", start, end)
-            if df.empty:
-                return None
-            df = df.sort_index()
-            hist_close = df["Close"]
-            close = float(hist_close.iloc[-1])
-            prev_close = float(hist_close.iloc[-2]) if len(hist_close) >= 2 else close
-        else:
-            hist = yf.Ticker(symbol).history(period="5d")
-            if len(hist) < 1:
-                return None
-            close = float(hist.iloc[-1]["Close"])
-            prev_close = float(hist.iloc[-2]["Close"]) if len(hist) >= 2 else close
-
-        change     = close - prev_close
-        change_pct = (change / prev_close * 100) if prev_close else 0
+        hist = yf.Ticker(symbol).history(period="5d")
+        if len(hist) < 1:
+            return None
+        close     = float(hist.iloc[-1]["Close"])
+        prev      = float(hist.iloc[-2]["Close"]) if len(hist) >= 2 else close
+        change    = close - prev
+        change_pct = (change / prev * 100) if prev else 0
         return {"close": close, "change": change, "change_pct": change_pct}
     except Exception as e:
-        print(f"Error fetching {symbol} ({src}): {e}")
+        print(f"Error fetching {symbol}: {e}")
         return None
 
 def fmt_line(name, data, decimals=2, bps=False):
@@ -74,22 +61,15 @@ def fmt_line(name, data, decimals=2, bps=False):
 # ── ニュース取得（Tavily）─────────────────
 def fetch_news():
     if not TAVILY_KEY:
-        print("Tavily APIキーなし。スキップ。")
         return ""
     try:
         url = "https://api.tavily.com/search"
-        queries = [
-            "日経平均 株価 今日 理由",
-            "ドル円 為替 今日",
-            "米国株 S&P500 ナスダック 今日",
-        ]
+        queries = ["日経平均 株価 今日 理由", "ドル円 為替 今日", "米国株 S&P500 ナスダック 今日"]
         all_results = []
         for q in queries:
             res = requests.post(url, json={
-                "api_key": TAVILY_KEY,
-                "query": q,
-                "search_depth": "basic",
-                "max_results": 3,
+                "api_key": TAVILY_KEY, "query": q,
+                "search_depth": "basic", "max_results": 3,
             }, timeout=10)
             if res.status_code == 200:
                 for r in res.json().get("results", []):
@@ -100,7 +80,7 @@ def fetch_news():
         return ""
 
 # ── Claude で解説＋クイズ生成 ────────────
-def generate_commentary_and_quiz(market_summary: str, news: str) -> dict:
+def generate_commentary_and_quiz(market_summary, news):
     empty = {"commentary": "", "question": "", "answer": ""}
     if not ANTHROPIC_KEY:
         return empty
@@ -137,8 +117,7 @@ def generate_commentary_and_quiz(market_summary: str, news: str) -> dict:
             max_tokens=500,
             messages=[{"role": "user", "content": prompt}]
         )
-        raw = message.content[0].text.strip()
-        raw = raw.replace("```json", "").replace("```", "").strip()
+        raw = message.content[0].text.strip().replace("```json","").replace("```","").strip()
         return json.loads(raw)
     except Exception as e:
         print(f"Claude API error: {e}")
@@ -152,7 +131,7 @@ def format_message():
 
     all_data = {}
     for item in INDICES + FX + BONDS:
-        all_data[item["name"]] = get_data(item["symbol"], item.get("src", "yf"))
+        all_data[item["name"]] = get_data(item["symbol"])
 
     summary_lines = []
     for item in INDICES + FX + BONDS:
@@ -166,7 +145,7 @@ def format_message():
     news   = fetch_news()
     result = generate_commentary_and_quiz(market_summary, news)
 
-    lines = [f"📊 マーケットサマリー", f"🕐 {date_str} JST"]
+    lines = ["📊 マーケットサマリー", f"🕐 {date_str} JST"]
 
     lines += ["", "🇯🇵 日本株"]
     for i in [x for x in INDICES if x["group"] == "jp_stock"]:
@@ -187,41 +166,26 @@ def format_message():
 
     if result["commentary"]:
         lines += ["", "🤖 AI解説", result["commentary"]]
-
     if result["question"]:
-        lines += [
-            "",
-            "📝 今日の学習クイズ",
-            result["question"],
-            "",
-            "💡 答え",
-            result["answer"],
-        ]
+        lines += ["", "📝 今日の学習クイズ", result["question"], "", "💡 答え", result["answer"]]
 
     return "\n".join(lines)
 
-# ── LINE Messaging API で送信 ──────────────
-def send_line_message(message: str):
+# ── LINE 送信 ──────────────────────────────
+def send_line_message(message):
     if not LINE_CHANNEL_TOKEN or not LINE_USER_ID:
         raise ValueError("LINE_CHANNEL_TOKEN または LINE_USER_ID が設定されていません")
-
-    url = "https://api.line.me/v2/bot/message/push"
-    headers = {
-        "Content-Type": "application/json",
-        "Authorization": f"Bearer {LINE_CHANNEL_TOKEN}",
-    }
-    payload = {
-        "to": LINE_USER_ID,
-        "messages": [{"type": "text", "text": message}],
-    }
-    res = requests.post(url, headers=headers, data=json.dumps(payload))
+    res = requests.post(
+        "https://api.line.me/v2/bot/message/push",
+        headers={"Content-Type": "application/json", "Authorization": f"Bearer {LINE_CHANNEL_TOKEN}"},
+        data=json.dumps({"to": LINE_USER_ID, "messages": [{"type": "text", "text": message}]})
+    )
     if res.status_code == 200:
         print("✅ LINE送信成功")
     else:
         print(f"❌ 送信失敗: {res.status_code} {res.text}")
         res.raise_for_status()
 
-# ── エントリーポイント ─────────────────────
 if __name__ == "__main__":
     print("データ取得中...")
     message = format_message()
