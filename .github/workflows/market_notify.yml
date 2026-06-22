@@ -16,7 +16,7 @@ jobs:
           python-version: "3.11"
 
       - name: 依存パッケージをインストール
-        run: pip install yfinance requests pytz anthropic pandas-datareader
+        run: pip install yfinance requests pytz anthropic
 
       - name: マーケット通知を送信
         env:
