@@ -1,0 +1,26 @@
+name: 午前相場レポート
+
+on:
+  schedule:
+    - cron: "0 3 * * 1-5"   # 月〜金 日本時間 12:00（UTC 3:00）
+  workflow_dispatch:
+
+jobs:
+  report:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+
+      - name: 依存パッケージをインストール
+        run: pip install requests pytz anthropic
+
+      - name: 午前相場レポートを送信
+        env:
+          LINE_CHANNEL_TOKEN: ${{ secrets.LINE_CHANNEL_TOKEN }}
+          ANTHROPIC_API_KEY:  ${{ secrets.ANTHROPIC_API_KEY }}
+          TAVILY_API_KEY:     ${{ secrets.TAVILY_API_KEY }}
+        run: python midday_report.py
