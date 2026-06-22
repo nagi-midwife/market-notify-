@@ -2,7 +2,7 @@ name: 毎日マーケット通知
 
 on:
   schedule:
-    - cron: "0 20 * * 0-4"
+    - cron: "0 20 * * 0-4"   # 月〜金 日本時間 5:00（UTC 20:00 前日）
   workflow_dispatch:
 
 jobs:
@@ -16,7 +16,7 @@ jobs:
           python-version: "3.11"
 
       - name: 依存パッケージをインストール
-        run: pip install yfinance requests pytz anthropic
+        run: pip install yfinance requests pytz anthropic pandas-datareader
 
       - name: マーケット通知を送信
         env:
