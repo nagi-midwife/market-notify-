@@ -173,15 +173,15 @@ def format_message():
 
 # ── LINE 送信 ──────────────────────────────
 def send_line_message(message):
-    if not LINE_CHANNEL_TOKEN or not LINE_USER_ID:
-        raise ValueError("LINE_CHANNEL_TOKEN または LINE_USER_ID が設定されていません")
+    if not LINE_CHANNEL_TOKEN:
+        raise ValueError("LINE_CHANNEL_TOKEN が設定されていません")
     res = requests.post(
-        "https://api.line.me/v2/bot/message/push",
+        "https://api.line.me/v2/bot/message/broadcast",
         headers={"Content-Type": "application/json", "Authorization": f"Bearer {LINE_CHANNEL_TOKEN}"},
-        data=json.dumps({"to": LINE_USER_ID, "messages": [{"type": "text", "text": message}]})
+        data=json.dumps({"messages": [{"type": "text", "text": message}]})
     )
     if res.status_code == 200:
-        print("✅ LINE送信成功")
+        print("✅ LINE Broadcast送信成功")
     else:
         print(f"❌ 送信失敗: {res.status_code} {res.text}")
         res.raise_for_status()
